@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>JobWatch Connectivity Diagnostics</title>
+  <title>BigChange Connectivity Diagnostics</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -244,8 +244,8 @@
 <header>
   <div class="header-inner">
     <div>
-      <h1>JobWatch Connectivity Diagnostics</h1>
-      <div class="header-meta">Tests DNS resolution and HTTPS connectivity to all JobWatch backend services</div>
+      <h1>BigChange Connectivity Diagnostics</h1>
+      <div class="header-meta">Tests DNS resolution and HTTPS connectivity to all BigChange app backend services</div>
     </div>
     <div class="header-meta" id="run-timestamp"></div>
   </div>
@@ -284,7 +284,7 @@
   <div class="export-area" id="export-area"></div>
 
   <div class="footer">
-    JobWatch Android Connectivity Diagnostics &mdash; BigChange
+    App Connectivity Diagnostics &mdash; BigChange
   </div>
 </div>
 
@@ -914,7 +914,7 @@ function stopChecks() {
 // ---------------------------------------------------------------------------
 function exportResults() {
   const data = {
-    tool: 'JobWatch Connectivity Diagnostics',
+    tool: 'BigChange Connectivity Diagnostics',
     environment: document.getElementById('env-select').value,
     timestamp: runStartTime ? runStartTime.toISOString() : new Date().toISOString(),
     userAgent: navigator.userAgent,
@@ -933,7 +933,7 @@ function exportResults() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `jobwatch-connectivity-${data.environment}-${new Date().toISOString().slice(0,10)}.json`;
+  a.download = `bigchange-connectivity-${data.environment}-${new Date().toISOString().slice(0,10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -950,7 +950,7 @@ function copyResults() {
   const warn = checkResults.filter(r => r.status === 'warn').length;
   const fail = checkResults.filter(r => r.status === 'fail').length;
 
-  let text = `JobWatch Connectivity Report (${env}) - ${ts} UTC\n`;
+  let text = `BigChange Connectivity Report (${env}) - ${ts} UTC\n`;
   text += `${'='.repeat(60)}\n`;
   text += `Pass: ${pass}  |  Slow: ${warn}  |  Fail: ${fail}  |  Total: ${checkResults.length}\n\n`;
 
