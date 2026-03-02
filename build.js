@@ -5,8 +5,7 @@ const { minify: minifyJS } = require('terser');
 const CleanCSS = require('clean-css');
 
 const SRC = path.join(__dirname, 'src');
-const BUILD = path.join(__dirname, 'build');
-const OUTPUT = path.join(BUILD, 'connectivity-check.html');
+const OUTPUT = path.join(__dirname, 'connectivity-check.html');
 
 async function build() {
   const html = fs.readFileSync(path.join(SRC, 'index.html'), 'utf8');
@@ -34,7 +33,6 @@ async function build() {
     combined += `\n<!-- build: ${commitHash} -->`;
   }
 
-  fs.mkdirSync(BUILD, { recursive: true });
   fs.writeFileSync(OUTPUT, combined, 'utf8');
 
   const size = fs.statSync(OUTPUT).size;
