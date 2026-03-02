@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BigChange Connectivity Diagnostics</title>
+  <style>/* __STYLES__ */</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div>
+      <h1>BigChange Connectivity Diagnostics</h1>
+      <div class="header-meta">Tests DNS resolution and HTTPS connectivity to all BigChange app backend services</div>
+    </div>
+    <div class="header-meta" id="run-timestamp"></div>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="controls">
+    <select class="env-select" id="env-select">
+      <option value="prod">Production</option>
+      <option value="beta">Beta</option>
+      <option value="test">Test</option>
+      <option value="alpha">Alpha</option>
+    </select>
+    <button class="btn btn-primary" id="run-btn" onclick="runAllChecks()">Run All Checks</button>
+    <button class="btn btn-secondary" id="stop-btn" onclick="stopChecks()" style="display:none">Stop</button>
+    <button class="btn btn-secondary" onclick="exportResults()">Export JSON</button>
+    <button class="btn btn-secondary" onclick="copyResults()">Copy Summary</button>
+  </div>
+
+  <div class="summary" id="summary">
+    <div class="stat"><div class="stat-num" id="stat-total" style="color:#52525b">0</div><div class="stat-lbl">Total</div></div>
+    <div class="stat"><div class="stat-num" id="stat-pass" style="color:#16a34a">0</div><div class="stat-lbl">Pass</div></div>
+    <div class="stat"><div class="stat-num" id="stat-warn" style="color:#a16207">0</div><div class="stat-lbl">Slow</div></div>
+    <div class="stat"><div class="stat-num" id="stat-fail" style="color:#dc2626">0</div><div class="stat-lbl">Fail</div></div>
+    <div class="stat"><div class="stat-num" id="stat-skip" style="color:#a1a1aa">0</div><div class="stat-lbl">Skip</div></div>
+  </div>
+
+  <div id="checks-container"></div>
+
+  <div class="log-panel">
+    <span class="log-toggle" onclick="toggleLog()">&#9654; Detailed Log</span>
+    <div class="log-box" id="log-box" style="display:none"></div>
+  </div>
+
+  <div class="export-area" id="export-area"></div>
+
+  <div class="footer">
+    App Connectivity Diagnostics &mdash; BigChange
+  </div>
+</div>
+
+<script>/* __SCRIPT__ */</script>
+</body>
+</html>
