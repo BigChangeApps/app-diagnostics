@@ -187,6 +187,36 @@ function buildChecks(env) {
         },
       ],
     },
+    // SSL / TLS diagnostics
+    {
+      group: 'SSL / TLS Diagnostics',
+      checks: [
+        {
+          name: 'Clock Skew',
+          url: '-',
+          host: 'worldtimeapi.org',
+          critical: false,
+          type: 'ssl-clock',
+          description: 'Compares device clock against server time; large skew causes TLS certificate failures',
+        },
+        {
+          name: 'TLS Handshake',
+          url: 'https://www.google.com/generate_204',
+          host: 'www.google.com',
+          critical: false,
+          type: 'ssl-tls',
+          description: 'Verifies TLS connection succeeds and measures handshake timing if available',
+        },
+        {
+          name: 'HTTP Downgrade',
+          url: `http://${e.device}/`,
+          host: e.device,
+          critical: false,
+          type: 'ssl-redirect',
+          description: 'Checks that plain HTTP correctly redirects to HTTPS',
+        },
+      ],
+    },
     // Proxy / interception detection
     {
       group: 'Proxy / Interception Detection',
@@ -589,6 +619,155 @@ async function checkNXDOMAINInterception(signal) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// SSL / TLS diagnostics
+// ---------------------------------------------------------------------------
+
+async function checkClockSkew(signal) {
+  const start = performance.now();
+  const timeoutAbort = new AbortController();
+  const timer = setTimeout(() => timeoutAbort.abort(), 10000);
+  const localNow = Date.now();
+
+  try {
+    // Try the Date header from a CORS fetch first
+    const data = await fetchCORS204(signal);
+    clearTimeout(timer);
+    const elapsed = performance.now() - start;
+
+    if (data.error) {
+      if (data.error === 'aborted') return { ok: false, latency: elapsed, error: 'aborted' };
+      return { ok: false, latency: elapsed, error: data.error };
+    }
+
+    // Try reading Date header (may be blocked by CORS)
+    // fetchCORS204 doesn't store it, so we try a dedicated fetch
+    let serverTime = null;
+
+    // Attempt a CORS fetch specifically to read Date header
+    try {
+      const resp = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC', {
+        mode: 'cors',
+        cache: 'no-store',
+        signal: signal.aborted ? signal : timeoutAbort.signal,
+      });
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.utc_datetime) {
+          serverTime = new Date(json.utc_datetime).getTime();
+        }
+      }
+    } catch (_) {
+      // worldtimeapi unavailable, try Date header from a fresh fetch
+      try {
+        const resp = await fetch('https://www.google.com/generate_204', {
+          mode: 'cors',
+          cache: 'no-store',
+          signal: signal.aborted ? signal : timeoutAbort.signal,
+        });
+        const dateHeader = resp.headers.get('date');
+        if (dateHeader) {
+          serverTime = new Date(dateHeader).getTime();
+        }
+      } catch (_) {}
+    }
+
+    if (serverTime === null) {
+      return { ok: true, latency: elapsed, detail: 'Could not obtain server time to compare (CORS restriction) - skipped' };
+    }
+
+    const skewMs = Math.abs(localNow - serverTime);
+    const skewSec = Math.round(skewMs / 1000);
+    const direction = localNow > serverTime ? 'ahead' : 'behind';
+
+    if (skewSec > 300) {
+      return { ok: false, latency: elapsed, detail: `Device clock ${skewSec}s ${direction} server time - will cause TLS certificate failures on all endpoints` };
+    }
+    if (skewSec > 60) {
+      return { ok: false, latency: elapsed, detail: `Device clock ${skewSec}s ${direction} server time - may cause intermittent certificate errors` };
+    }
+    return { ok: true, latency: elapsed, detail: `Clock skew ${skewSec}s ${direction} - within acceptable range` };
+  } catch (err) {
+    clearTimeout(timer);
+    const elapsed = performance.now() - start;
+    if (signal.aborted) return { ok: false, latency: elapsed, error: 'aborted' };
+    return { ok: false, latency: elapsed, error: err.message || 'failed to check clock skew' };
+  }
+}
+
+async function checkTLSTiming(signal) {
+  const start = performance.now();
+
+  // Ensure we have a CORS fetch result
+  const data = await fetchCORS204(signal);
+  const elapsed = performance.now() - start;
+
+  if (data.error === 'aborted') return { ok: false, latency: elapsed, error: 'aborted' };
+  if (data.error) return { ok: false, latency: elapsed, error: `TLS connection failed: ${data.error}` };
+
+  // TLS connection succeeded — try to get timing detail from Performance API
+  const url = 'https://www.google.com/generate_204';
+  const entries = performance.getEntriesByName(url, 'resource');
+  const entry = entries.length > 0 ? entries[entries.length - 1] : null;
+
+  let tlsDetail = 'TLS connection established';
+  let tlsMs = null;
+
+  if (entry && entry.secureConnectionStart > 0) {
+    tlsMs = Math.round(entry.connectEnd - entry.secureConnectionStart);
+    const tcpMs = Math.round(entry.secureConnectionStart - entry.connectStart);
+    const dnsMs = Math.round(entry.domainLookupEnd - entry.domainLookupStart);
+    tlsDetail = `TLS handshake: ${tlsMs}ms (TCP: ${tcpMs}ms, DNS: ${dnsMs}ms)`;
+
+    if (tlsMs > 1000) {
+      return { ok: false, latency: data.elapsed, detail: `${tlsDetail} - slow TLS handshake, possible proxy double-TLS` };
+    }
+  } else if (entry && entry.connectStart === entry.connectEnd && entry.connectStart > 0) {
+    tlsDetail = 'TLS session reused (cached connection)';
+  } else {
+    tlsDetail = 'TLS connected successfully (detailed timing restricted by CORS)';
+  }
+
+  return { ok: true, latency: data.elapsed, detail: tlsDetail };
+}
+
+async function checkHTTPDowngrade(signal, host) {
+  const start = performance.now();
+  const timeoutAbort = new AbortController();
+  const timer = setTimeout(() => timeoutAbort.abort(), 10000);
+
+  try {
+    const response = await fetch(`http://${host}/`, {
+      method: 'HEAD',
+      mode: 'no-cors',
+      redirect: 'manual',
+      cache: 'no-store',
+      signal: signal.aborted ? signal : timeoutAbort.signal,
+    });
+    clearTimeout(timer);
+    const elapsed = performance.now() - start;
+
+    // redirect: 'manual' with no-cors returns opaqueredirect type if server redirects
+    if (response.type === 'opaqueredirect') {
+      return { ok: true, latency: elapsed, detail: 'HTTP correctly redirects to HTTPS' };
+    }
+
+    // If we get an opaque response (no-cors success), the server responded to plain HTTP
+    if (response.type === 'opaque') {
+      return { ok: false, latency: elapsed, detail: 'Server accepted plain HTTP without redirecting to HTTPS' };
+    }
+
+    return { ok: true, latency: elapsed, detail: `Response type: ${response.type}` };
+  } catch (err) {
+    clearTimeout(timer);
+    const elapsed = performance.now() - start;
+    if (signal.aborted) return { ok: false, latency: elapsed, error: 'aborted' };
+
+    // Mixed content or network error — cannot test
+    return { ok: true, latency: elapsed, detail: 'Could not test HTTP downgrade (mixed content policy or network error) - skipped' };
+  }
+}
+
 function checkLatencyDifferential() {
   const googleResult = checkResults.find(r => r.host === 'www.google.com');
   const cloudflareResult = checkResults.find(r => r.host === '1.1.1.1');
@@ -668,6 +847,7 @@ async function runAllChecks() {
       let result;
 
       const isProxyCheck = (check.type || '').startsWith('proxy-');
+      const isSslCheck = (check.type || '').startsWith('ssl-');
 
       try {
         if (check.type === 'websocket') {
@@ -685,6 +865,15 @@ async function runAllChecks() {
         } else if (check.type === 'proxy-latency') {
           log(`[${ci}] Comparing IP vs DNS latency`, 'log-info');
           result = checkLatencyDifferential();
+        } else if (check.type === 'ssl-clock') {
+          log(`[${ci}] Checking device clock skew`, 'log-info');
+          result = await checkClockSkew(abortController.signal);
+        } else if (check.type === 'ssl-tls') {
+          log(`[${ci}] Testing TLS handshake timing`, 'log-info');
+          result = await checkTLSTiming(abortController.signal);
+        } else if (check.type === 'ssl-redirect') {
+          log(`[${ci}] Testing HTTP downgrade for ${check.host}`, 'log-info');
+          result = await checkHTTPDowngrade(abortController.signal, check.host);
         } else {
           log(`[${ci}] Testing HTTPS: ${check.url}`, 'log-info');
           result = await checkHTTPS(check.url, abortController.signal);
@@ -703,9 +892,14 @@ async function runAllChecks() {
       } else if (isProxyCheck && !result.ok) {
         status = 'warn';
         badgeOverride = 'detected';
+      } else if (isSslCheck && result.error) {
+        status = 'fail';
+      } else if (isSslCheck && !result.ok) {
+        status = 'warn';
+        badgeOverride = 'issue';
       } else if (!result.ok) {
         status = 'fail';
-      } else if (result.latency > SLOW_THRESHOLD_MS && !isProxyCheck) {
+      } else if (result.latency > SLOW_THRESHOLD_MS && !isProxyCheck && !isSslCheck) {
         status = 'warn';
       } else {
         status = 'ok';
@@ -732,8 +926,8 @@ async function runAllChecks() {
       const latStr = `${Math.round(result.latency)}ms`;
       if (status === 'ok') {
         log(`[${ci}] OK ${check.host} (${latStr})${result.detail || result.note ? ' - ' + (result.detail || result.note) : ''}`, 'log-ok');
-      } else if (status === 'warn' && isProxyCheck) {
-        log(`[${ci}] WARN ${check.host} (${latStr}) - ${result.detail}`, 'log-warn');
+      } else if (status === 'warn' && (isProxyCheck || isSslCheck)) {
+        log(`[${ci}] WARN ${check.name} (${latStr}) - ${result.detail}`, 'log-warn');
       } else if (status === 'warn') {
         log(`[${ci}] SLOW ${check.host} (${latStr})`, 'log-warn');
       } else if (status === 'fail') {
@@ -748,8 +942,8 @@ async function runAllChecks() {
     await Promise.allSettled(promises);
   }
 
-  // Run secondary DNS check for any failed hosts (exclude proxy and websocket checks)
-  const failedHosts = checkResults.filter(r => r.status === 'fail' && r.type !== 'websocket' && !(r.type || '').startsWith('proxy-')).map(r => r.host);
+  // Run secondary DNS check for any failed hosts (exclude proxy, ssl, and websocket checks)
+  const failedHosts = checkResults.filter(r => r.status === 'fail' && r.type !== 'websocket' && !(r.type || '').startsWith('proxy-') && !(r.type || '').startsWith('ssl-')).map(r => r.host);
   if (failedHosts.length > 0) {
     log('', '');
     log(`Running secondary DNS probe (image method) for ${failedHosts.length} failed host(s)...`, 'log-info');
@@ -757,7 +951,9 @@ async function runAllChecks() {
       if (abortController.signal.aborted) break;
       const dnsResult = await checkDNSviaImage(host);
       if (dnsResult.ok) {
-        log(`  DNS probe OK for ${host} (${Math.round(dnsResult.latency)}ms) - host resolves but HTTPS failed (CORS/firewall?)`, 'log-warn');
+        log(`  DNS probe OK for ${host} (${Math.round(dnsResult.latency)}ms) - host resolves but HTTPS failed`, 'log-warn');
+        log(`    Possible causes: TLS/certificate error, SSL-inspecting proxy with untrusted CA, or firewall blocking after TLS handshake`, 'log-warn');
+        log(`    Check: device clock accuracy, corporate proxy/firewall SSL inspection settings, root CA certificates`, 'log-warn');
       } else {
         log(`  DNS probe FAIL for ${host} - likely DNS resolution failure or host unreachable`, 'log-fail');
       }
@@ -789,6 +985,21 @@ async function runAllChecks() {
     log('PROXY / INTERCEPTION INDICATORS:', 'log-warn');
     for (const r of proxyWarnings) {
       log(`  ${r.name} - ${r.detail}`, 'log-warn');
+    }
+  }
+
+  const sslWarnings = checkResults.filter(r => (r.type || '').startsWith('ssl-') && (r.status === 'warn' || r.status === 'fail'));
+  if (sslWarnings.length > 0) {
+    log('', '');
+    log('SSL / TLS ISSUES:', 'log-warn');
+    for (const r of sslWarnings) {
+      log(`  ${r.name} - ${r.detail || r.error}`, r.status === 'fail' ? 'log-fail' : 'log-warn');
+    }
+    // Cross-reference: if clock skew is bad and HTTPS checks also failed, link them
+    const clockResult = checkResults.find(r => r.type === 'ssl-clock');
+    const httpsFailCount = checkResults.filter(r => r.type === 'https' && r.status === 'fail').length;
+    if (clockResult && clockResult.status !== 'ok' && httpsFailCount > 0) {
+      log(`  Note: Clock skew detected alongside ${httpsFailCount} HTTPS failure(s) - clock skew is likely the root cause`, 'log-warn');
     }
   }
 
@@ -853,8 +1064,8 @@ function copyResults() {
   text += `Pass: ${pass}  |  Slow: ${warn}  |  Fail: ${fail}  |  Total: ${checkResults.length}\n\n`;
 
   for (const r of checkResults) {
-    const isProxy = (r.type || '').startsWith('proxy-');
-    const icon = r.status === 'ok' ? 'OK  ' : r.status === 'warn' && isProxy ? 'WARN' : r.status === 'warn' ? 'SLOW' : r.status === 'fail' ? 'FAIL' : 'SKIP';
+    const isAdvisory = (r.type || '').startsWith('proxy-') || (r.type || '').startsWith('ssl-');
+    const icon = r.status === 'ok' ? 'OK  ' : r.status === 'warn' && isAdvisory ? 'WARN' : r.status === 'warn' ? 'SLOW' : r.status === 'fail' ? 'FAIL' : 'SKIP';
     const crit = r.critical ? ' [CRITICAL]' : '';
     const lat = r.latencyMs !== null ? ` (${r.latencyMs}ms)` : '';
     const err = r.error ? ` - ${r.error}` : '';
