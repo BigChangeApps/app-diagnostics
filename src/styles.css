@@ -180,6 +180,35 @@ header h1 { font-size: 1.3rem; font-weight: 700; }
 .badge-skip { background: #f4f4f5; color: #a1a1aa; }
 .badge-pending { background: #f4f4f5; color: #a1a1aa; }
 
+/* System info panel */
+.sysinfo-panel {
+  margin-bottom: 24px;
+}
+.sysinfo-grid {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 4px 12px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  padding: 12px 16px;
+  font-size: 0.78rem;
+}
+.sysinfo-label {
+  color: #71717a;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sysinfo-value {
+  color: #18181b;
+  word-break: break-all;
+}
+@media (max-width: 600px) {
+  .sysinfo-grid {
+    grid-template-columns: auto 1fr;
+  }
+}
+
 /* Log panel */
 .log-panel {
   margin-top: 28px;

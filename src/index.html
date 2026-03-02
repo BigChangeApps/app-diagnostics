@@ -33,6 +33,11 @@
     <button class="btn btn-secondary" onclick="copyResults()">Copy Summary</button>
   </div>
 
+  <div class="sysinfo-panel">
+    <span class="log-toggle" onclick="toggleSysinfo()">&#9654; System Information</span>
+    <div class="sysinfo-grid" id="sysinfo-grid" style="display:none"></div>
+  </div>
+
   <div class="summary" id="summary">
     <div class="stat"><div class="stat-num" id="stat-total" style="color:#52525b">0</div><div class="stat-lbl">Total</div></div>
     <div class="stat"><div class="stat-num" id="stat-pass" style="color:#16a34a">0</div><div class="stat-lbl">Pass</div></div>

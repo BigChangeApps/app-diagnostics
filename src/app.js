@@ -814,7 +814,7 @@ function exportResults() {
     tool: 'BigChange Connectivity Diagnostics',
     environment: document.getElementById('env-select').value,
     timestamp: runStartTime ? runStartTime.toISOString() : new Date().toISOString(),
-    userAgent: navigator.userAgent,
+    systemInfo,
     results: checkResults,
     summary: {
       total: checkResults.length,
@@ -849,6 +849,7 @@ function copyResults() {
 
   let text = `BigChange Connectivity Report (${env}) - ${ts} UTC\n`;
   text += `${'='.repeat(60)}\n`;
+  if (systemInfo) text += `System: ${formatSystemInfoText(systemInfo)}\n`;
   text += `Pass: ${pass}  |  Slow: ${warn}  |  Fail: ${fail}  |  Total: ${checkResults.length}\n\n`;
 
   for (const r of checkResults) {
@@ -878,6 +879,132 @@ function copyResults() {
 }
 
 // ---------------------------------------------------------------------------
-// Init: render default checks
+// System information collection
 // ---------------------------------------------------------------------------
+function getGPURenderer() {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return null;
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    if (!ext) return { vendor: gl.getParameter(gl.VENDOR), renderer: gl.getParameter(gl.RENDERER) };
+    return {
+      vendor: gl.getParameter(ext.UNMASKED_VENDOR_WEBGL),
+      renderer: gl.getParameter(ext.UNMASKED_RENDERER_WEBGL),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function collectSystemInfo() {
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const uad = navigator.userAgentData;
+  const gpu = getGPURenderer();
+
+  const info = {
+    browser: {
+      userAgent: navigator.userAgent,
+      platform: uad ? uad.platform : navigator.platform,
+      mobile: uad ? uad.mobile : /Mobi|Android/i.test(navigator.userAgent),
+      brands: uad ? uad.brands.map(b => `${b.brand} ${b.version}`).join(', ') : null,
+      cookiesEnabled: navigator.cookieEnabled,
+    },
+    hardware: {
+      cores: navigator.hardwareConcurrency || null,
+      memoryGB: navigator.deviceMemory || null,
+      gpu: gpu ? gpu.renderer : null,
+      gpuVendor: gpu ? gpu.vendor : null,
+    },
+    display: {
+      screen: `${screen.width}x${screen.height}`,
+      available: `${screen.availWidth}x${screen.availHeight}`,
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      dpr: window.devicePixelRatio || 1,
+      colorDepth: screen.colorDepth,
+    },
+    network: {
+      online: navigator.onLine,
+      type: conn ? conn.type : null,
+      effectiveType: conn ? conn.effectiveType : null,
+      downlinkMbps: conn ? conn.downlink : null,
+      rttMs: conn ? conn.rtt : null,
+      saveData: conn ? conn.saveData : null,
+    },
+    locale: {
+      language: navigator.language,
+      languages: navigator.languages ? navigator.languages.join(', ') : navigator.language,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      utcOffset: new Date().getTimezoneOffset(),
+    },
+    input: {
+      maxTouchPoints: navigator.maxTouchPoints || 0,
+      pointerType: window.matchMedia('(pointer: coarse)').matches ? 'coarse (touch)' : 'fine (mouse)',
+    },
+  };
+
+  return info;
+}
+
+function renderSystemInfo(info) {
+  const el = document.getElementById('sysinfo-grid');
+  if (!el) return;
+
+  const items = [
+    ['Platform', info.browser.platform],
+    ['Mobile', info.browser.mobile ? 'Yes' : 'No'],
+    ['Browser', info.browser.brands],
+    ['CPU Cores', info.hardware.cores],
+    ['Memory', info.hardware.memoryGB ? `${info.hardware.memoryGB} GB` : null],
+    ['GPU', info.hardware.gpu],
+    ['Screen', `${info.display.screen} @ ${info.display.dpr}x`],
+    ['Viewport', info.display.viewport],
+    ['Colour Depth', `${info.display.colorDepth}-bit`],
+    ['Connection', [info.network.type, info.network.effectiveType].filter(Boolean).join(' / ') || null],
+    ['Bandwidth', info.network.downlinkMbps != null ? `${info.network.downlinkMbps} Mbps` : null],
+    ['RTT', info.network.rttMs != null ? `${info.network.rttMs} ms` : null],
+    ['Data Saver', info.network.saveData === true ? 'On' : info.network.saveData === false ? 'Off' : null],
+    ['Online', info.network.online ? 'Yes' : 'No'],
+    ['Timezone', info.locale.timezone],
+    ['Language', info.locale.language],
+    ['Touch Points', info.input.maxTouchPoints > 0 ? `${info.input.maxTouchPoints}` : 'None'],
+    ['Pointer', info.input.pointerType],
+  ];
+
+  el.innerHTML = items
+    .filter(([, v]) => v != null)
+    .map(([k, v]) => `<div class="sysinfo-label">${k}</div><div class="sysinfo-value">${v}</div>`)
+    .join('');
+}
+
+function toggleSysinfo() {
+  const grid = document.getElementById('sysinfo-grid');
+  const toggle = grid.previousElementSibling;
+  if (grid.style.display === 'none') {
+    grid.style.display = '';
+    toggle.textContent = '\u25BC System Information';
+  } else {
+    grid.style.display = 'none';
+    toggle.textContent = '\u25B6 System Information';
+  }
+}
+
+function formatSystemInfoText(info) {
+  const parts = [info.browser.platform];
+  if (info.browser.brands) parts.push(info.browser.brands);
+  if (info.hardware.cores) parts.push(`${info.hardware.cores} cores`);
+  if (info.hardware.memoryGB) parts.push(`${info.hardware.memoryGB}GB RAM`);
+  parts.push(info.display.screen + ` @${info.display.dpr}x`);
+  if (info.network.effectiveType) parts.push(info.network.effectiveType);
+  parts.push(info.locale.timezone);
+  return parts.join('  |  ');
+}
+
+let systemInfo = null;
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+systemInfo = collectSystemInfo();
+renderSystemInfo(systemInfo);
 renderChecks(buildChecks('prod'));
