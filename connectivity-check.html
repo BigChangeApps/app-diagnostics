@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobWatch Connectivity Diagnostics</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      background: #f4f4f5;
+      color: #18181b;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1e293b;
+      color: #f8fafc;
+      padding: 20px 0;
+      margin-bottom: 24px;
+    }
+    .header-inner {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    .header-meta { font-size: 0.78rem; color: #94a3b8; }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px 48px;
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .env-select {
+      font-size: 0.85rem;
+      padding: 8px 14px;
+      border: 1px solid #d4d4d8;
+      border-radius: 8px;
+      background: #fff;
+      color: #18181b;
+      cursor: pointer;
+    }
+    .btn {
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 8px 20px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary { background: #3b82f6; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+    .btn-secondary { background: #e4e4e7; color: #3f3f46; }
+    .btn-secondary:hover { background: #d4d4d8; }
+
+    /* Summary bar */
+    .summary {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+    .stat {
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+      min-width: 90px;
+      text-align: center;
+    }
+    .stat-num { font-size: 1.6rem; font-weight: 800; }
+    .stat-lbl {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: #71717a;
+      margin-top: 2px;
+    }
+
+    /* Groups */
+    .group {
+      margin-bottom: 28px;
+    }
+    .group-heading {
+      font-size: 0.82rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #52525b;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e4e4e7;
+    }
+
+    /* Check rows */
+    .check-list {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+      overflow: hidden;
+    }
+    .check-row {
+      display: grid;
+      grid-template-columns: 32px 1fr auto auto;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 1px solid #f4f4f5;
+      font-size: 0.85rem;
+    }
+    .check-row:last-child { border-bottom: none; }
+
+    .status-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .status-pending { background: #f4f4f5; color: #a1a1aa; }
+    .status-running { background: #dbeafe; color: #2563eb; }
+    .status-ok { background: #dcfce7; color: #16a34a; }
+    .status-warn { background: #fef9c3; color: #a16207; }
+    .status-fail { background: #fee2e2; color: #dc2626; }
+    .status-skip { background: #f4f4f5; color: #a1a1aa; }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid #93c5fd;
+      border-top-color: #2563eb;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    .check-info { min-width: 0; }
+    .check-name { font-weight: 600; color: #18181b; }
+    .check-url {
+      font-size: 0.75rem;
+      color: #71717a;
+      font-family: ui-monospace, monospace;
+      word-break: break-all;
+    }
+    .check-latency {
+      font-family: ui-monospace, monospace;
+      font-size: 0.78rem;
+      color: #71717a;
+      white-space: nowrap;
+      min-width: 70px;
+      text-align: right;
+    }
+    .check-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 99px;
+      white-space: nowrap;
+    }
+    .badge-ok { background: #dcfce7; color: #16a34a; }
+    .badge-warn { background: #fef9c3; color: #a16207; }
+    .badge-fail { background: #fee2e2; color: #dc2626; }
+    .badge-skip { background: #f4f4f5; color: #a1a1aa; }
+    .badge-pending { background: #f4f4f5; color: #a1a1aa; }
+
+    /* Log panel */
+    .log-panel {
+      margin-top: 28px;
+    }
+    .log-toggle {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #52525b;
+      cursor: pointer;
+      user-select: none;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e4e4e7;
+      display: block;
+      margin-bottom: 10px;
+    }
+    .log-box {
+      background: #18181b;
+      color: #a1a1aa;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-family: ui-monospace, monospace;
+      font-size: 0.72rem;
+      line-height: 1.7;
+      max-height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-ok { color: #4ade80; }
+    .log-warn { color: #facc15; }
+    .log-fail { color: #f87171; }
+    .log-info { color: #60a5fa; }
+
+    /* Footer */
+    .footer {
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid #e4e4e7;
+      font-size: 0.75rem;
+      color: #a1a1aa;
+      text-align: center;
+    }
+
+    /* Export */
+    .export-area {
+      margin-top: 16px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div>
+      <h1>JobWatch Connectivity Diagnostics</h1>
+      <div class="header-meta">Tests DNS resolution and HTTPS connectivity to all JobWatch backend services</div>
+    </div>
+    <div class="header-meta" id="run-timestamp"></div>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="controls">
+    <select class="env-select" id="env-select">
+      <option value="prod">Production</option>
+      <option value="beta">Beta</option>
+      <option value="test">Test</option>
+      <option value="alpha">Alpha</option>
+    </select>
+    <button class="btn btn-primary" id="run-btn" onclick="runAllChecks()">Run All Checks</button>
+    <button class="btn btn-secondary" id="stop-btn" onclick="stopChecks()" style="display:none">Stop</button>
+    <button class="btn btn-secondary" onclick="exportResults()">Export JSON</button>
+    <button class="btn btn-secondary" onclick="copyResults()">Copy Summary</button>
+  </div>
+
+  <div class="summary" id="summary">
+    <div class="stat"><div class="stat-num" id="stat-total" style="color:#52525b">0</div><div class="stat-lbl">Total</div></div>
+    <div class="stat"><div class="stat-num" id="stat-pass" style="color:#16a34a">0</div><div class="stat-lbl">Pass</div></div>
+    <div class="stat"><div class="stat-num" id="stat-warn" style="color:#a16207">0</div><div class="stat-lbl">Slow</div></div>
+    <div class="stat"><div class="stat-num" id="stat-fail" style="color:#dc2626">0</div><div class="stat-lbl">Fail</div></div>
+    <div class="stat"><div class="stat-num" id="stat-skip" style="color:#a1a1aa">0</div><div class="stat-lbl">Skip</div></div>
+  </div>
+
+  <div id="checks-container"></div>
+
+  <div class="log-panel">
+    <span class="log-toggle" onclick="toggleLog()">&#9654; Detailed Log</span>
+    <div class="log-box" id="log-box" style="display:none"></div>
+  </div>
+
+  <div class="export-area" id="export-area"></div>
+
+  <div class="footer">
+    JobWatch Android Connectivity Diagnostics &mdash; BigChange
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ---------------------------------------------------------------------------
+// Endpoint definitions per environment
+// ---------------------------------------------------------------------------
+const ENVIRONMENTS = {
+  prod: {
+    device:    'device.bigchange.com',
+    nodejs:    'nodejs.bigchange.com',
+    clients:   'clients.bigchange.com',
+    cdn:       'cdn.bigchange.com',
+    help:      'help.bigchange.com',
+  },
+  beta: {
+    device:    'beta.device.bigchange.com',
+    nodejs:    'beta.nodejs.bigchange.com',
+    clients:   'beta.clients.bigchange.com',
+    cdn:       'cdn.bigchange.com',
+    help:      'help.bigchange.com',
+  },
+  test: {
+    device:    'device.test.bigchange.com',
+    nodejs:    'test.nodejs.bigchange.com',
+    clients:   'test.clients.bigchange.com',
+    cdn:       'cdn.bigchange.com',
+    help:      'help.bigchange.com',
+  },
+  alpha: {
+    device:    'alpha-device.test.bigchange.com',
+    nodejs:    'nodejs.alpha.bigchange.com',
+    clients:   'test.clients.bigchange.com',
+    cdn:       'cdn.bigchange.com',
+    help:      'help.bigchange.com',
+  },
+};
+
+// Third-party endpoints (same for all environments)
+const THIRD_PARTY = {
+  realm:        'realm.mongodb.com',
+  mongodb:      'services.cloud.mongodb.com',
+  s3:           's3-eu-west-1.amazonaws.com',
+  googleMaps:   'maps.googleapis.com',
+  firebase:     'firebaseinstallations.googleapis.com',
+  fcm:          'fcm.googleapis.com',
+  pendo:        'app.pendo.io',
+  playStore:    'play.google.com',
+};
+
+function buildChecks(env) {
+  const e = ENVIRONMENTS[env];
+  return [
+    // BigChange core
+    {
+      group: 'BigChange Core Services',
+      checks: [
+        {
+          name: 'Device Service API',
+          url: `https://${e.device}/S01.ashx`,
+          host: e.device,
+          critical: true,
+          description: 'Primary API endpoint for all device sync, asset sync, job data',
+        },
+        {
+          name: 'Device Service API (root)',
+          url: `https://${e.device}/`,
+          host: e.device,
+          critical: true,
+          description: 'Retrofit base URL',
+        },
+        {
+          name: 'Node.js / Socket.IO',
+          url: `https://${e.nodejs}/`,
+          host: e.nodejs,
+          critical: true,
+          description: 'Real-time notifications, hypertracking, outbox push',
+        },
+        {
+          name: 'WebSocket (Socket.IO)',
+          url: `wss://${e.nodejs}/socket.io/?EIO=4&transport=websocket`,
+          host: e.nodejs,
+          critical: true,
+          type: 'websocket',
+          description: 'Socket.IO WebSocket transport',
+        },
+        {
+          name: 'Client Portal / Attachments',
+          url: `https://${e.clients}/`,
+          host: e.clients,
+          critical: false,
+          description: 'Job attachment viewer (WebView)',
+        },
+        {
+          name: 'CDN (static assets)',
+          url: `https://${e.cdn}/`,
+          host: e.cdn,
+          critical: false,
+          description: 'Resource icons and static images',
+        },
+        {
+          name: 'Help Centre',
+          url: `https://${e.help}/`,
+          host: e.help,
+          critical: false,
+          description: 'In-app help articles',
+        },
+      ],
+    },
+    // Third-party services
+    {
+      group: 'Third-Party Services',
+      checks: [
+        {
+          name: 'MongoDB Atlas / Realm Sync',
+          url: `https://${THIRD_PARTY.realm}/`,
+          host: THIRD_PARTY.realm,
+          critical: true,
+          description: 'Realm Device Sync (jobs, tasks)',
+        },
+        {
+          name: 'MongoDB Cloud Services',
+          url: `https://${THIRD_PARTY.mongodb}/`,
+          host: THIRD_PARTY.mongodb,
+          critical: true,
+          description: 'Atlas App Services backend',
+        },
+        {
+          name: 'AWS S3 (eu-west-1)',
+          url: `https://${THIRD_PARTY.s3}/`,
+          host: THIRD_PARTY.s3,
+          critical: true,
+          description: 'Photo upload/download via presigned URLs',
+        },
+        {
+          name: 'Google Maps API',
+          url: `https://${THIRD_PARTY.googleMaps}/`,
+          host: THIRD_PARTY.googleMaps,
+          critical: false,
+          description: 'Reverse geocoding and map tiles',
+        },
+        {
+          name: 'Firebase / Google Services',
+          url: `https://${THIRD_PARTY.firebase}/`,
+          host: THIRD_PARTY.firebase,
+          critical: false,
+          description: 'Firebase installations, analytics, crashlytics',
+        },
+        {
+          name: 'Firebase Cloud Messaging',
+          url: `https://${THIRD_PARTY.fcm}/`,
+          host: THIRD_PARTY.fcm,
+          critical: false,
+          description: 'Push notifications',
+        },
+        {
+          name: 'Pendo Analytics',
+          url: `https://${THIRD_PARTY.pendo}/`,
+          host: THIRD_PARTY.pendo,
+          critical: false,
+          description: 'Product analytics SDK',
+        },
+        {
+          name: 'Google Play Store',
+          url: `https://${THIRD_PARTY.playStore}/`,
+          host: THIRD_PARTY.playStore,
+          critical: false,
+          description: 'Force update redirect',
+        },
+      ],
+    },
+    // Connectivity baseline
+    {
+      group: 'General Connectivity',
+      checks: [
+        {
+          name: 'DNS / Internet (Google)',
+          url: 'https://www.google.com/generate_204',
+          host: 'www.google.com',
+          critical: false,
+          description: 'Baseline internet connectivity check',
+        },
+        {
+          name: 'DNS / Internet (Cloudflare)',
+          url: 'https://1.1.1.1/',
+          host: '1.1.1.1',
+          critical: false,
+          description: 'Baseline connectivity via IP (bypasses DNS)',
+        },
+      ],
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let checkResults = [];
+let abortController = null;
+let logEntries = [];
+let runStartTime = null;
+
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
+function log(msg, cls) {
+  const ts = new Date().toISOString().slice(11, 23);
+  logEntries.push({ ts, msg, cls: cls || '' });
+  const box = document.getElementById('log-box');
+  const line = document.createElement('span');
+  line.className = cls || '';
+  line.textContent = `[${ts}] ${msg}\n`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function toggleLog() {
+  const box = document.getElementById('log-box');
+  const toggle = box.previousElementSibling;
+  if (box.style.display === 'none') {
+    box.style.display = 'block';
+    toggle.textContent = '\u25BC Detailed Log';
+  } else {
+    box.style.display = 'none';
+    toggle.textContent = '\u25B6 Detailed Log';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UI rendering
+// ---------------------------------------------------------------------------
+function renderChecks(groups) {
+  const container = document.getElementById('checks-container');
+  container.innerHTML = '';
+  let idx = 0;
+
+  for (const group of groups) {
+    const div = document.createElement('div');
+    div.className = 'group';
+    div.innerHTML = `<div class="group-heading">${group.group}</div>`;
+    const list = document.createElement('div');
+    list.className = 'check-list';
+
+    for (const check of group.checks) {
+      const row = document.createElement('div');
+      row.className = 'check-row';
+      row.id = `check-${idx}`;
+      row.innerHTML = `
+        <div class="status-icon status-pending" id="icon-${idx}">&bull;</div>
+        <div class="check-info">
+          <div class="check-name">${check.name}${check.critical ? ' <span style="color:#dc2626;font-size:0.7rem">CRITICAL</span>' : ''}</div>
+          <div class="check-url">${check.host}</div>
+        </div>
+        <div class="check-latency" id="latency-${idx}">&mdash;</div>
+        <div><span class="check-badge badge-pending" id="badge-${idx}">pending</span></div>
+      `;
+      list.appendChild(row);
+      idx++;
+    }
+    div.appendChild(list);
+    container.appendChild(div);
+  }
+}
+
+function setCheckStatus(idx, status, latencyMs, detail) {
+  const icon = document.getElementById(`icon-${idx}`);
+  const latency = document.getElementById(`latency-${idx}`);
+  const badge = document.getElementById(`badge-${idx}`);
+  if (!icon) return;
+
+  icon.innerHTML = '';
+  icon.className = 'status-icon';
+  badge.className = 'check-badge';
+
+  switch (status) {
+    case 'running':
+      icon.classList.add('status-running');
+      const spinner = document.createElement('div');
+      spinner.className = 'spinner';
+      icon.appendChild(spinner);
+      badge.classList.add('badge-pending');
+      badge.textContent = 'testing...';
+      break;
+    case 'ok':
+      icon.classList.add('status-ok');
+      icon.textContent = '\u2713';
+      badge.classList.add('badge-ok');
+      badge.textContent = 'pass';
+      break;
+    case 'warn':
+      icon.classList.add('status-warn');
+      icon.textContent = '!';
+      badge.classList.add('badge-warn');
+      badge.textContent = 'slow';
+      break;
+    case 'fail':
+      icon.classList.add('status-fail');
+      icon.textContent = '\u2717';
+      badge.classList.add('badge-fail');
+      badge.textContent = 'fail';
+      break;
+    case 'skip':
+      icon.classList.add('status-skip');
+      icon.textContent = '-';
+      badge.classList.add('badge-skip');
+      badge.textContent = 'skipped';
+      break;
+  }
+
+  if (latencyMs !== null && latencyMs !== undefined) {
+    latency.textContent = `${Math.round(latencyMs)} ms`;
+  }
+  if (detail) {
+    latency.title = detail;
+  }
+}
+
+function updateSummary() {
+  let total = checkResults.length;
+  let pass = 0, warn = 0, fail = 0, skip = 0;
+  for (const r of checkResults) {
+    if (r.status === 'ok') pass++;
+    else if (r.status === 'warn') warn++;
+    else if (r.status === 'fail') fail++;
+    else if (r.status === 'skip') skip++;
+  }
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-pass').textContent = pass;
+  document.getElementById('stat-warn').textContent = warn;
+  document.getElementById('stat-fail').textContent = fail;
+  document.getElementById('stat-skip').textContent = skip;
+}
+
+// ---------------------------------------------------------------------------
+// Connectivity check logic
+// ---------------------------------------------------------------------------
+
+// HTTPS check using fetch with no-cors (works cross-origin, detects DNS/network failure)
+async function checkHTTPS(url, signal, timeoutMs) {
+  const start = performance.now();
+  const timeout = timeoutMs || 15000;
+
+  const timeoutId = setTimeout(() => {
+    if (!signal.aborted) signal.reason = 'timeout';
+  }, timeout);
+
+  const timeoutAbort = new AbortController();
+  const timer = setTimeout(() => timeoutAbort.abort(), timeout);
+
+  // Race between user abort signal and timeout
+  const combinedSignal = signal.aborted ? signal : timeoutAbort.signal;
+
+  try {
+    // Use no-cors mode: we won't get body/status, but a successful opaque
+    // response proves the host resolved and TCP connected.
+    // If DNS fails or host is unreachable, fetch throws TypeError.
+    const response = await fetch(url, {
+      method: 'HEAD',
+      mode: 'no-cors',
+      cache: 'no-store',
+      signal: combinedSignal,
+    });
+    const elapsed = performance.now() - start;
+    clearTimeout(timer);
+    clearTimeout(timeoutId);
+    return { ok: true, latency: elapsed, httpStatus: response.status, type: response.type };
+  } catch (err) {
+    const elapsed = performance.now() - start;
+    clearTimeout(timer);
+    clearTimeout(timeoutId);
+
+    if (signal.aborted) {
+      return { ok: false, latency: elapsed, error: 'aborted' };
+    }
+    if (elapsed >= timeout - 100) {
+      return { ok: false, latency: elapsed, error: `timeout (${timeout}ms)` };
+    }
+    return { ok: false, latency: elapsed, error: err.message || 'network error' };
+  }
+}
+
+// WebSocket check
+async function checkWebSocket(url, signal, timeoutMs) {
+  const start = performance.now();
+  const timeout = timeoutMs || 10000;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try { ws.close(); } catch (_) {}
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      finish({ ok: false, latency: performance.now() - start, error: `timeout (${timeout}ms)` });
+    }, timeout);
+
+    if (signal.aborted) {
+      clearTimeout(timer);
+      resolve({ ok: false, latency: 0, error: 'aborted' });
+      return;
+    }
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      finish({ ok: false, latency: performance.now() - start, error: 'aborted' });
+    });
+
+    let ws;
+    try {
+      ws = new WebSocket(url);
+    } catch (err) {
+      clearTimeout(timer);
+      finish({ ok: false, latency: performance.now() - start, error: err.message });
+      return;
+    }
+
+    ws.onopen = () => {
+      clearTimeout(timer);
+      finish({ ok: true, latency: performance.now() - start });
+    };
+    ws.onerror = () => {
+      clearTimeout(timer);
+      // WebSocket connected to server but got rejected (e.g., auth) still means DNS+TCP worked
+      const elapsed = performance.now() - start;
+      // If error came very quickly (<200ms) it's likely DNS/network failure
+      // If it took longer, the server probably responded (TCP connected, then rejected)
+      if (elapsed < 200) {
+        finish({ ok: false, latency: elapsed, error: 'connection failed' });
+      } else {
+        finish({ ok: true, latency: elapsed, note: 'TCP connected (WS handshake rejected, expected)' });
+      }
+    };
+    ws.onclose = (e) => {
+      clearTimeout(timer);
+      const elapsed = performance.now() - start;
+      if (!settled) {
+        // Close without open = likely server reachable but rejected upgrade
+        finish({ ok: true, latency: elapsed, note: `closed (code: ${e.code})` });
+      }
+    };
+  });
+}
+
+// DNS resolution timing via Image trick (backup method)
+function checkDNSviaImage(host) {
+  return new Promise((resolve) => {
+    const start = performance.now();
+    const img = new Image();
+    const timer = setTimeout(() => {
+      img.src = '';
+      resolve({ ok: false, latency: performance.now() - start, error: 'timeout' });
+    }, 10000);
+
+    img.onload = img.onerror = () => {
+      clearTimeout(timer);
+      const elapsed = performance.now() - start;
+      // Both onload and onerror mean DNS resolved (server responded, even if no image)
+      resolve({ ok: true, latency: elapsed });
+    };
+    // Request a path that won't exist -- we only care about DNS + TCP
+    img.src = `https://${host}/favicon.ico?_dc=${Date.now()}`;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Main check runner
+// ---------------------------------------------------------------------------
+const SLOW_THRESHOLD_MS = 3000;
+
+async function runAllChecks() {
+  const env = document.getElementById('env-select').value;
+  const groups = buildChecks(env);
+  const allChecks = groups.flatMap(g => g.checks);
+
+  // Reset
+  checkResults = [];
+  logEntries = [];
+  document.getElementById('log-box').innerHTML = '';
+  runStartTime = new Date();
+  document.getElementById('run-timestamp').textContent = `Run: ${runStartTime.toISOString().replace('T', ' ').slice(0, 19)} UTC`;
+
+  renderChecks(groups);
+
+  abortController = new AbortController();
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('stop-btn').style.display = '';
+
+  log(`Starting connectivity checks for environment: ${env.toUpperCase()}`, 'log-info');
+  log(`Checking ${allChecks.length} endpoints...`, 'log-info');
+
+  // Run checks in batches of 4 to avoid overwhelming the browser
+  const BATCH_SIZE = 4;
+  let idx = 0;
+
+  for (let batch = 0; batch < allChecks.length; batch += BATCH_SIZE) {
+    if (abortController.signal.aborted) break;
+
+    const batchChecks = allChecks.slice(batch, batch + BATCH_SIZE);
+    const batchIndices = [];
+    for (let i = 0; i < batchChecks.length; i++) {
+      batchIndices.push(batch + i);
+    }
+
+    // Mark batch as running
+    for (const bi of batchIndices) {
+      setCheckStatus(bi, 'running');
+    }
+
+    // Run batch in parallel
+    const promises = batchChecks.map(async (check, i) => {
+      const ci = batchIndices[i];
+      let result;
+
+      try {
+        if (check.type === 'websocket') {
+          log(`[${ci}] Testing WebSocket: ${check.url}`, 'log-info');
+          result = await checkWebSocket(check.url, abortController.signal);
+        } else {
+          log(`[${ci}] Testing HTTPS: ${check.url}`, 'log-info');
+          result = await checkHTTPS(check.url, abortController.signal);
+        }
+      } catch (err) {
+        result = { ok: false, latency: 0, error: err.message };
+      }
+
+      // Determine status
+      let status;
+      if (result.error === 'aborted') {
+        status = 'skip';
+      } else if (!result.ok) {
+        status = 'fail';
+      } else if (result.latency > SLOW_THRESHOLD_MS) {
+        status = 'warn';
+      } else {
+        status = 'ok';
+      }
+
+      const entry = {
+        name: check.name,
+        host: check.host,
+        url: check.url,
+        critical: check.critical,
+        status,
+        latencyMs: Math.round(result.latency),
+        error: result.error || null,
+        note: result.note || null,
+        type: check.type || 'https',
+        description: check.description,
+      };
+      checkResults.push(entry);
+
+      setCheckStatus(ci, status, result.latency, result.error || result.note);
+
+      // Log result
+      const latStr = `${Math.round(result.latency)}ms`;
+      if (status === 'ok') {
+        log(`[${ci}] OK ${check.host} (${latStr})${result.note ? ' - ' + result.note : ''}`, 'log-ok');
+      } else if (status === 'warn') {
+        log(`[${ci}] SLOW ${check.host} (${latStr})`, 'log-warn');
+      } else if (status === 'fail') {
+        log(`[${ci}] FAIL ${check.host} - ${result.error} (${latStr})`, 'log-fail');
+      } else {
+        log(`[${ci}] SKIPPED ${check.host}`, '');
+      }
+
+      updateSummary();
+    });
+
+    await Promise.allSettled(promises);
+  }
+
+  // Run secondary DNS check for any failed hosts
+  const failedHosts = checkResults.filter(r => r.status === 'fail' && r.type !== 'websocket').map(r => r.host);
+  if (failedHosts.length > 0) {
+    log('', '');
+    log(`Running secondary DNS probe (image method) for ${failedHosts.length} failed host(s)...`, 'log-info');
+    for (const host of [...new Set(failedHosts)]) {
+      if (abortController.signal.aborted) break;
+      const dnsResult = await checkDNSviaImage(host);
+      if (dnsResult.ok) {
+        log(`  DNS probe OK for ${host} (${Math.round(dnsResult.latency)}ms) - host resolves but HTTPS failed (CORS/firewall?)`, 'log-warn');
+      } else {
+        log(`  DNS probe FAIL for ${host} - likely DNS resolution failure or host unreachable`, 'log-fail');
+      }
+    }
+  }
+
+  // Summary
+  log('', '');
+  const pass = checkResults.filter(r => r.status === 'ok').length;
+  const warn = checkResults.filter(r => r.status === 'warn').length;
+  const fail = checkResults.filter(r => r.status === 'fail').length;
+  const critFail = checkResults.filter(r => r.status === 'fail' && r.critical).length;
+  log(`Done. ${pass} passed, ${warn} slow, ${fail} failed (${critFail} critical).`, fail > 0 ? 'log-fail' : 'log-ok');
+
+  if (critFail > 0) {
+    log('', '');
+    log('CRITICAL FAILURES:', 'log-fail');
+    for (const r of checkResults.filter(r => r.status === 'fail' && r.critical)) {
+      log(`  ${r.name} (${r.host}) - ${r.error}`, 'log-fail');
+    }
+    log('', '');
+    log('These failures will cause asset sync errors, job completion blocking,', 'log-fail');
+    log('and "Sending job data, please wait" stuck messages on devices.', 'log-fail');
+  }
+
+  document.getElementById('run-btn').disabled = false;
+  document.getElementById('stop-btn').style.display = 'none';
+  abortController = null;
+}
+
+function stopChecks() {
+  if (abortController) {
+    abortController.abort();
+    log('Checks stopped by user.', 'log-warn');
+  }
+  document.getElementById('run-btn').disabled = false;
+  document.getElementById('stop-btn').style.display = 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+function exportResults() {
+  const data = {
+    tool: 'JobWatch Connectivity Diagnostics',
+    environment: document.getElementById('env-select').value,
+    timestamp: runStartTime ? runStartTime.toISOString() : new Date().toISOString(),
+    userAgent: navigator.userAgent,
+    results: checkResults,
+    summary: {
+      total: checkResults.length,
+      pass: checkResults.filter(r => r.status === 'ok').length,
+      slow: checkResults.filter(r => r.status === 'warn').length,
+      fail: checkResults.filter(r => r.status === 'fail').length,
+      criticalFail: checkResults.filter(r => r.status === 'fail' && r.critical).length,
+    },
+    log: logEntries.map(e => `[${e.ts}] ${e.msg}`),
+  };
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `jobwatch-connectivity-${data.environment}-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function copyResults() {
+  if (checkResults.length === 0) {
+    alert('Run checks first.');
+    return;
+  }
+
+  const env = document.getElementById('env-select').value.toUpperCase();
+  const ts = runStartTime ? runStartTime.toISOString().replace('T', ' ').slice(0, 19) : 'N/A';
+  const pass = checkResults.filter(r => r.status === 'ok').length;
+  const warn = checkResults.filter(r => r.status === 'warn').length;
+  const fail = checkResults.filter(r => r.status === 'fail').length;
+
+  let text = `JobWatch Connectivity Report (${env}) - ${ts} UTC\n`;
+  text += `${'='.repeat(60)}\n`;
+  text += `Pass: ${pass}  |  Slow: ${warn}  |  Fail: ${fail}  |  Total: ${checkResults.length}\n\n`;
+
+  for (const r of checkResults) {
+    const icon = r.status === 'ok' ? 'OK  ' : r.status === 'warn' ? 'SLOW' : r.status === 'fail' ? 'FAIL' : 'SKIP';
+    const crit = r.critical ? ' [CRITICAL]' : '';
+    const lat = r.latencyMs !== null ? ` (${r.latencyMs}ms)` : '';
+    const err = r.error ? ` - ${r.error}` : '';
+    text += `${icon} ${r.name}${crit} - ${r.host}${lat}${err}\n`;
+  }
+
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('[onclick="copyResults()"]');
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  }).catch(() => {
+    // Fallback for non-HTTPS contexts
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Init: render default checks
+// ---------------------------------------------------------------------------
+renderChecks(buildChecks('prod'));
+</script>
+</body>
+</html>
