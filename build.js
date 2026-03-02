@@ -16,9 +16,13 @@ async function build() {
   const minJSResult = await minifyJS(js, { compress: true, mangle: true });
   const minJSCode = minJSResult.code;
 
+  const commitHash = process.env.COMMIT_SHA || '';
+  const buildHashHtml = commitHash ? ` &middot; build ${commitHash.slice(0, 7)}` : '';
+
   let combined = html
     .replace('/* __STYLES__ */', minCSS)
-    .replace('/* __SCRIPT__ */', minJSCode);
+    .replace('/* __SCRIPT__ */', minJSCode)
+    .replace('<!-- __BUILD_HASH__ -->', buildHashHtml);
 
   combined = await minifyHTML(combined, {
     collapseWhitespace: true,
@@ -26,12 +30,6 @@ async function build() {
     minifyCSS: false,
     minifyJS: false,
   });
-
-  // Append build hash if provided via env var
-  const commitHash = process.env.COMMIT_SHA || '';
-  if (commitHash) {
-    combined += `\n<!-- build: ${commitHash} -->`;
-  }
 
   fs.writeFileSync(OUTPUT, combined, 'utf8');
 
