@@ -187,6 +187,44 @@ function buildChecks(env) {
         },
       ],
     },
+    // Proxy / interception detection
+    {
+      group: 'Proxy / Interception Detection',
+      checks: [
+        {
+          name: 'HTTP 204 Interception',
+          url: 'https://www.google.com/generate_204',
+          host: 'www.google.com',
+          critical: false,
+          type: 'proxy-204',
+          description: 'Fetches Google 204 endpoint with CORS; expects status 204 + empty body',
+        },
+        {
+          name: 'Via / Proxy Header',
+          url: 'https://www.google.com/generate_204',
+          host: 'www.google.com',
+          critical: false,
+          type: 'proxy-via',
+          description: 'Inspects CORS response for Via, X-Forwarded-For, and other proxy headers',
+        },
+        {
+          name: 'NXDOMAIN Interception',
+          url: 'https://nxdomain-proxy-test.invalid/',
+          host: 'nxdomain-proxy-test.invalid',
+          critical: false,
+          type: 'proxy-nxdomain',
+          description: 'Requests a guaranteed-nonexistent domain; success means DNS is being hijacked',
+        },
+        {
+          name: 'IP vs DNS Latency Differential',
+          url: '-',
+          host: 'google.com vs 1.1.1.1',
+          critical: false,
+          type: 'proxy-latency',
+          description: 'Compares Google (DNS) vs Cloudflare (IP) latency; large differential suggests proxy',
+        },
+      ],
+    },
   ];
 }
 
@@ -260,7 +298,7 @@ function renderChecks(groups) {
   }
 }
 
-function setCheckStatus(idx, status, latencyMs, detail) {
+function setCheckStatus(idx, status, latencyMs, detail, badgeOverride) {
   const icon = document.getElementById(`icon-${idx}`);
   const latency = document.getElementById(`latency-${idx}`);
   const badge = document.getElementById(`badge-${idx}`);
@@ -289,7 +327,7 @@ function setCheckStatus(idx, status, latencyMs, detail) {
       icon.classList.add('status-warn');
       icon.textContent = '!';
       badge.classList.add('badge-warn');
-      badge.textContent = 'slow';
+      badge.textContent = badgeOverride || 'slow';
       break;
     case 'fail':
       icon.classList.add('status-fail');
@@ -463,6 +501,123 @@ function checkDNSviaImage(host) {
 }
 
 // ---------------------------------------------------------------------------
+// Proxy / interception detection
+// ---------------------------------------------------------------------------
+let cors204Response = null;
+
+async function fetchCORS204(signal) {
+  if (cors204Response) return cors204Response;
+
+  const start = performance.now();
+  const timeoutAbort = new AbortController();
+  const timer = setTimeout(() => timeoutAbort.abort(), 10000);
+
+  try {
+    const response = await fetch('https://www.google.com/generate_204', {
+      method: 'GET',
+      mode: 'cors',
+      cache: 'no-store',
+      signal: signal.aborted ? signal : timeoutAbort.signal,
+    });
+    clearTimeout(timer);
+    const elapsed = performance.now() - start;
+    const body = await response.text();
+
+    const proxyHeaders = {};
+    for (const name of ['via', 'x-forwarded-for', 'x-proxy-id', 'x-cache', 'x-squid-error']) {
+      const val = response.headers.get(name);
+      if (val) proxyHeaders[name] = val;
+    }
+
+    cors204Response = { body, elapsed, proxyHeaders, status: response.status, error: null };
+  } catch (err) {
+    clearTimeout(timer);
+    const elapsed = performance.now() - start;
+    cors204Response = { error: signal.aborted ? 'aborted' : (err.message || 'network error'), elapsed };
+  }
+  return cors204Response;
+}
+
+async function checkHTTP204Interception(signal) {
+  const data = await fetchCORS204(signal);
+  if (data.error === 'aborted') return { ok: false, latency: data.elapsed, error: 'aborted' };
+  if (data.error) return { ok: false, latency: data.elapsed, error: data.error };
+
+  const issues = [];
+  if (data.status !== 204) issues.push(`status ${data.status} (expected 204)`);
+  if (data.body.length > 0) issues.push(`non-empty body (${data.body.length} bytes)`);
+
+  if (issues.length > 0) {
+    return { ok: false, latency: data.elapsed, detail: `Proxy/captive portal likely: ${issues.join(', ')}` };
+  }
+  return { ok: true, latency: data.elapsed, detail: 'Status 204, empty body - no interception detected' };
+}
+
+async function checkViaHeader(signal) {
+  const data = await fetchCORS204(signal);
+  if (data.error === 'aborted') return { ok: false, latency: data.elapsed, error: 'aborted' };
+  if (data.error) return { ok: false, latency: data.elapsed, error: data.error };
+
+  const found = Object.entries(data.proxyHeaders);
+  if (found.length > 0) {
+    const headerStr = found.map(([k, v]) => `${k}: ${v}`).join('; ');
+    return { ok: false, latency: data.elapsed, detail: `Proxy headers detected: ${headerStr}` };
+  }
+  return { ok: true, latency: data.elapsed, detail: 'No proxy headers visible (CORS may hide some headers)' };
+}
+
+async function checkNXDOMAINInterception(signal) {
+  const start = performance.now();
+  const timeoutAbort = new AbortController();
+  const timer = setTimeout(() => timeoutAbort.abort(), 8000);
+
+  try {
+    const response = await fetch('https://nxdomain-proxy-test.invalid/', {
+      method: 'HEAD',
+      mode: 'no-cors',
+      cache: 'no-store',
+      signal: signal.aborted ? signal : timeoutAbort.signal,
+    });
+    clearTimeout(timer);
+    const elapsed = performance.now() - start;
+    return { ok: false, latency: elapsed, detail: `Proxy intercepting NXDOMAIN: got ${response.type} response for .invalid TLD` };
+  } catch (err) {
+    clearTimeout(timer);
+    const elapsed = performance.now() - start;
+    if (signal.aborted) return { ok: false, latency: elapsed, error: 'aborted' };
+    return { ok: true, latency: elapsed, detail: 'NXDOMAIN correctly failed - no DNS interception' };
+  }
+}
+
+function checkLatencyDifferential() {
+  const googleResult = checkResults.find(r => r.host === 'www.google.com');
+  const cloudflareResult = checkResults.find(r => r.host === '1.1.1.1');
+
+  if (!googleResult || !cloudflareResult) {
+    return { ok: true, latency: 0, detail: 'Cannot compare - baseline results unavailable' };
+  }
+  if (googleResult.status === 'fail' || cloudflareResult.status === 'fail') {
+    return { ok: true, latency: 0, detail: 'Cannot compare - one or both baseline checks failed' };
+  }
+
+  const dnsLatency = googleResult.latencyMs;
+  const ipLatency = cloudflareResult.latencyMs;
+
+  if (ipLatency === 0) {
+    return { ok: true, latency: 0, detail: `DNS: ${dnsLatency}ms, IP: ${ipLatency}ms - IP too fast to compare` };
+  }
+
+  const ratio = dnsLatency / ipLatency;
+  const differential = dnsLatency - ipLatency;
+
+  if (ratio > 3 && differential > 500) {
+    return { ok: false, latency: differential, detail: `DNS ${dnsLatency}ms vs IP ${ipLatency}ms (${ratio.toFixed(1)}x) - proxy overhead likely` };
+  }
+
+  return { ok: true, latency: differential > 0 ? differential : 0, detail: `DNS ${dnsLatency}ms vs IP ${ipLatency}ms (${ratio.toFixed(1)}x) - within normal range` };
+}
+
+// ---------------------------------------------------------------------------
 // Main check runner
 // ---------------------------------------------------------------------------
 const SLOW_THRESHOLD_MS = 3000;
@@ -475,6 +630,7 @@ async function runAllChecks() {
   // Reset
   checkResults = [];
   logEntries = [];
+  cors204Response = null;
   document.getElementById('log-box').innerHTML = '';
   runStartTime = new Date();
   document.getElementById('run-timestamp').textContent = `Run: ${runStartTime.toISOString().replace('T', ' ').slice(0, 19)} UTC`;
@@ -511,10 +667,24 @@ async function runAllChecks() {
       const ci = batchIndices[i];
       let result;
 
+      const isProxyCheck = (check.type || '').startsWith('proxy-');
+
       try {
         if (check.type === 'websocket') {
           log(`[${ci}] Testing WebSocket: ${check.url}`, 'log-info');
           result = await checkWebSocket(check.url, abortController.signal);
+        } else if (check.type === 'proxy-204') {
+          log(`[${ci}] Testing HTTP 204 interception`, 'log-info');
+          result = await checkHTTP204Interception(abortController.signal);
+        } else if (check.type === 'proxy-via') {
+          log(`[${ci}] Testing proxy header detection`, 'log-info');
+          result = await checkViaHeader(abortController.signal);
+        } else if (check.type === 'proxy-nxdomain') {
+          log(`[${ci}] Testing NXDOMAIN interception`, 'log-info');
+          result = await checkNXDOMAINInterception(abortController.signal);
+        } else if (check.type === 'proxy-latency') {
+          log(`[${ci}] Comparing IP vs DNS latency`, 'log-info');
+          result = checkLatencyDifferential();
         } else {
           log(`[${ci}] Testing HTTPS: ${check.url}`, 'log-info');
           result = await checkHTTPS(check.url, abortController.signal);
@@ -525,11 +695,17 @@ async function runAllChecks() {
 
       // Determine status
       let status;
+      let badgeOverride = null;
       if (result.error === 'aborted') {
         status = 'skip';
+      } else if (isProxyCheck && result.error) {
+        status = 'fail';
+      } else if (isProxyCheck && !result.ok) {
+        status = 'warn';
+        badgeOverride = 'detected';
       } else if (!result.ok) {
         status = 'fail';
-      } else if (result.latency > SLOW_THRESHOLD_MS) {
+      } else if (result.latency > SLOW_THRESHOLD_MS && !isProxyCheck) {
         status = 'warn';
       } else {
         status = 'ok';
@@ -544,17 +720,20 @@ async function runAllChecks() {
         latencyMs: Math.round(result.latency),
         error: result.error || null,
         note: result.note || null,
+        detail: result.detail || null,
         type: check.type || 'https',
         description: check.description,
       };
       checkResults.push(entry);
 
-      setCheckStatus(ci, status, result.latency, result.error || result.note);
+      setCheckStatus(ci, status, result.latency, result.error || result.detail || result.note, badgeOverride);
 
       // Log result
       const latStr = `${Math.round(result.latency)}ms`;
       if (status === 'ok') {
-        log(`[${ci}] OK ${check.host} (${latStr})${result.note ? ' - ' + result.note : ''}`, 'log-ok');
+        log(`[${ci}] OK ${check.host} (${latStr})${result.detail || result.note ? ' - ' + (result.detail || result.note) : ''}`, 'log-ok');
+      } else if (status === 'warn' && isProxyCheck) {
+        log(`[${ci}] WARN ${check.host} (${latStr}) - ${result.detail}`, 'log-warn');
       } else if (status === 'warn') {
         log(`[${ci}] SLOW ${check.host} (${latStr})`, 'log-warn');
       } else if (status === 'fail') {
@@ -569,8 +748,8 @@ async function runAllChecks() {
     await Promise.allSettled(promises);
   }
 
-  // Run secondary DNS check for any failed hosts
-  const failedHosts = checkResults.filter(r => r.status === 'fail' && r.type !== 'websocket').map(r => r.host);
+  // Run secondary DNS check for any failed hosts (exclude proxy and websocket checks)
+  const failedHosts = checkResults.filter(r => r.status === 'fail' && r.type !== 'websocket' && !(r.type || '').startsWith('proxy-')).map(r => r.host);
   if (failedHosts.length > 0) {
     log('', '');
     log(`Running secondary DNS probe (image method) for ${failedHosts.length} failed host(s)...`, 'log-info');
@@ -602,6 +781,15 @@ async function runAllChecks() {
     log('', '');
     log('These failures will cause asset sync errors, job completion blocking,', 'log-fail');
     log('and "Sending job data, please wait" stuck messages on devices.', 'log-fail');
+  }
+
+  const proxyWarnings = checkResults.filter(r => (r.type || '').startsWith('proxy-') && r.status === 'warn');
+  if (proxyWarnings.length > 0) {
+    log('', '');
+    log('PROXY / INTERCEPTION INDICATORS:', 'log-warn');
+    for (const r of proxyWarnings) {
+      log(`  ${r.name} - ${r.detail}`, 'log-warn');
+    }
   }
 
   document.getElementById('run-btn').disabled = false;
@@ -664,11 +852,13 @@ function copyResults() {
   text += `Pass: ${pass}  |  Slow: ${warn}  |  Fail: ${fail}  |  Total: ${checkResults.length}\n\n`;
 
   for (const r of checkResults) {
-    const icon = r.status === 'ok' ? 'OK  ' : r.status === 'warn' ? 'SLOW' : r.status === 'fail' ? 'FAIL' : 'SKIP';
+    const isProxy = (r.type || '').startsWith('proxy-');
+    const icon = r.status === 'ok' ? 'OK  ' : r.status === 'warn' && isProxy ? 'WARN' : r.status === 'warn' ? 'SLOW' : r.status === 'fail' ? 'FAIL' : 'SKIP';
     const crit = r.critical ? ' [CRITICAL]' : '';
     const lat = r.latencyMs !== null ? ` (${r.latencyMs}ms)` : '';
     const err = r.error ? ` - ${r.error}` : '';
-    text += `${icon} ${r.name}${crit} - ${r.host}${lat}${err}\n`;
+    const det = r.detail && !r.error ? ` - ${r.detail}` : '';
+    text += `${icon} ${r.name}${crit} - ${r.host}${lat}${err}${det}\n`;
   }
 
   navigator.clipboard.writeText(text).then(() => {
